@@ -1,0 +1,55 @@
+name: Build
+
+run-name: "${{ github.actor }} — ${{ github.event_name }} on ${{ github.ref_name }}"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "include/**"
+      - "tests/**"
+      - "third_party/**"
+      - "CMakeLists.txt"
+      - "build.sh"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "docker-compose.ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "build-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Linux + Windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Build Linux + Windows
+        run: |
+          chmod +x build.sh
+          docker compose -f docker-compose.ci.yml run --rm cpp-app ./build.sh --all
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4
+        with:
+          name: Workbench-linux
+          path: build_linux/Workbench
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4
+        with:
+          name: Workbench-windows
+          path: build_win/Workbench.exe
+          retention-days: 30
+          if-no-files-found: error

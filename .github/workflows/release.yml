@@ -1,0 +1,39 @@
+name: Release
+
+run-name: "Release ${{ github.ref_name }}"
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Build Linux + Windows
+        run: |
+          chmod +x build.sh
+          docker compose -f docker-compose.ci.yml run --rm cpp-app ./build.sh --all
+
+      - name: Package artifacts
+        run: |
+          zip -j Workbench-linux.zip build_linux/Workbench
+          zip -j Workbench-windows.zip build_win/Workbench.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          name: "Workbench ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            Workbench-linux.zip
+            Workbench-windows.zip

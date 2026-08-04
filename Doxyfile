@@ -1,0 +1,45 @@
+# Doxygen configuration for Workbench.
+# Generate browsable HTML API docs from the in-source Doxygen comments:
+#
+#   doxygen Doxyfile
+#
+# Output lands in docs/api/html/index.html (gitignored).
+
+PROJECT_NAME           = "Workbench"
+PROJECT_BRIEF          = "A TUI frontend for llama.cpp"
+OUTPUT_DIRECTORY       = docs/api
+
+# Sources
+INPUT                  = include src docs/arch.md
+RECURSIVE              = YES
+# Vendored / third-party headers are not our API surface.
+EXCLUDE                = include/server/httplib.h
+EXCLUDE_PATTERNS       = */third_party/* */build_linux/* */build_win/*
+FILE_PATTERNS          = *.h *.hpp *.cpp *.md
+USE_MDFILE_AS_MAINPAGE = docs/arch.md
+
+# Extraction
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+
+# C++ specifics
+BUILTIN_STL_SUPPORT    = YES
+SORT_MEMBER_DOCS       = NO
+
+# Output: HTML only, no LaTeX
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+
+# Diagrams (graphviz optional; harmless if dot is absent)
+HAVE_DOT               = NO
+CLASS_DIAGRAMS         = YES
+
+# Quiet but surface real problems
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = YES

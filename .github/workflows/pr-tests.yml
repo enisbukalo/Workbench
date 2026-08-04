@@ -1,0 +1,63 @@
+name: PR Tests
+
+run-name: "${{ github.actor }} — PR #${{ github.event.pull_request.number }}"
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "pr-tests-${{ github.event.pull_request.number }}"
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Build and run tests
+        id: tests
+        continue-on-error: true
+        run: |
+          docker compose -f docker-compose.ci.yml run --rm cpp-app ./build.sh --test
+
+      - name: Upload build and test artifacts
+        if: always()
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4.6.2
+        with:
+          name: workbench-pr-${{ github.event.pull_request.number }}-${{ github.sha }}
+          path: |
+            build_linux/
+            logs/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Report CI result
+        if: always()
+        env:
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          echo "Test suite: $TEST_OUTCOME"
+          if [[ "$TEST_OUTCOME" == "success" ]]; then
+            exit 0
+          fi
+          # Print the actual failure logs from THIS (failing) step, so `gh run view --log-failed`,
+          # a human clicking the red step, and any other tooling all see the real cause — not just
+          # "exit code 1". The build/test steps use continue-on-error, so their logs would otherwise
+          # sit in steps that "succeeded" and never surface as the failure.
+          echo "::error::PR tests failed — tests=$TEST_OUTCOME. Failure logs follow."
+          for log in logs/build_linux.log logs/test_output.log; do
+            if [[ -f "$log" ]]; then
+              echo "===== $log ====="
+              cat "$log"
+              echo "===== end $log ====="
+            fi
+          done
+          exit 1

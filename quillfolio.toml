@@ -1,0 +1,364 @@
+# quillfolio.toml — quill's data-driven phase engine config.
+#
+# This is the DEFAULT written by `quill --init`. It reproduces quill's classic
+# 0-6 workflow: branch -> plan -> review plan -> implement -> review impl
+# (2-model fan-out + finalizer) -> build/test -> commit/PR.
+#
+# Everything here is data: edit it (or the server's shared persona library)
+# and the change is picked up on the next run. Adding, removing, reordering, or
+# renaming an LLM phase is config + .md only — no driver code change.
+
+[repo]
+# omit `name` -> derived from `git remote get-url origin` (cwd is the repo).
+# name          = "owner/repo"
+# project_board = "Workbench"   # omit -> skip the board step
+pr_base       = "main"
+
+[runner]
+# REQUIRED -- which coding-agent CLI quill drives each phase through.
+# Built-in: "opencode" or "pi". Configure that CLI's models to point at the server.
+kind = "pi"
+
+# Model-server backend behind the pre-spawn seam.
+#   "llamacpp" (default) -- swap presets per phase on the llama.cpp router.
+#   "vllm"               -- one always-on model; reset its prefix cache before each phase.
+# vllm requires machine-level QUILL_VLLM_URL. Launch vllm with VLLM_SERVER_DEV_MODE=1
+# so POST /reset_prefix_cache is mounted. Never commit machine addresses here.
+backend    = "vllm"
+
+# Before each LLM phase, Quill requires the configured model to exactly match GET /v1/models.
+# When another model is resident, append its service below to this command and wait for vLLM.
+[runner.vllm]
+command = ["sudo", "systemctl", "start"]
+
+[runner.vllm.models]
+Gemma4_31B_NVFP4       = "gemma31-nvfp4"
+Gemma4_31B_FP8         = "gemma31"
+"Qwen3.6_27B_NVFP4"     = "qwen27-nvfp4"
+"Qwen3.6_27B_FP8"       = "qwen27"
+"Qwen3.6_35B_A3B_NVFP4" = "qwen35-nvfp4"
+"Qwen3.6_35B_A3B_FP8"   = "qwen35"
+
+[build]
+# Local gates run tests first, then build the Linux and Windows release executables. Quill captures
+# stdout/stderr into build-findings.md and sends it to the implementation retry on either failure.
+command = "./build.sh --all"
+test    = "./build.sh --test"
+log_dir = "logs"
+
+[retries]            # revise-then-verify attempts. 0 = no retry (a BLOCK halts).
+default = 3          # default revise rounds for gated phases without an explicit retry_budget
+spawn   = 1          # re-spawns on CRASH / GARBAGE -- any phase
+
+[timeouts]
+opencode_run_seconds = 5400   # per-spawn hang guard
+model_load_seconds   = 360    # vLLM service switch/load ceiling (6 minutes)
+ci_seconds           = 2400   # GitHub Actions queue + PR build/test ceiling
+
+# ---------------------------------------------------------------------------
+# Phases: an ordered array. The engine runs them top to bottom, dispatching on
+# `type`. Reorder/add/remove freely.
+#
+#   producer   - LLM writes an artifact (plan, impl).            persona + model
+#   reviewer   - LLM judges and writes findings. `[[workflows.ticket.phase.audits]]` runs named, same-model audit
+#                lanes concurrently on vLLM; `models=[...]` remains sequential model fan-out.
+#                `against=[producer ids]` names the artifacts it reviews against.
+#   finalizer  - LLM reconciles N reviewers' findings + gates.   reconciles=[...]
+#   mechanical - deterministic `test`, `build`, combined `build_test`, or `ci_check` step.
+#
+# Git is agent-driven: branch + commit are producers whose personas run git/gh themselves.
+# Flow flags: gates, retry_budget, on_block (producer to re-run on BLOCK).
+# ---------------------------------------------------------------------------
+
+[workflows]
+default = "ticket"
+
+[workflows.ticket]
+label = "New ticket"
+mode = "create"
+
+[[workflows.ticket.phase]]
+id       = "plan"
+type     = "producer"
+label    = "write plan"
+persona  = "plan.md"
+model    = "Qwen3.6_35B_A3B_NVFP4"
+skills   = ["workbench"]
+artifact = "plan.md"
+max_artifact_chars = 16000
+
+[[workflows.ticket.phase]]
+id           = "review_plan"
+type         = "reviewer"
+label        = "review plan"
+persona      = "review-plan.md"
+models       = ["Qwen3.6_27B_NVFP4"]
+skills       = ["workbench"]
+against      = ["plan"]
+gates        = true
+structured_findings = true
+retry_budget = 1
+on_block     = "plan"
+max_artifact_chars = 12000
+
+[[workflows.ticket.phase]]
+id                = "impl_core"
+type              = "producer"
+label             = "core"
+persona           = "impl-core.md"
+model             = "Qwen3.6_35B_A3B_NVFP4"
+skills            = ["workbench"]
+artifact          = "impl-core.md"
+inputs            = ["plan"]
+max_artifact_chars = 8000
+
+[[workflows.ticket.phase]]
+id                = "impl_integration"
+type              = "producer"
+label             = "integration"
+persona           = "impl-integration.md"
+model             = "Qwen3.6_35B_A3B_NVFP4"
+skills            = ["workbench"]
+artifact          = "impl-integration.md"
+inputs            = ["plan", "impl_core"]
+max_artifact_chars = 8000
+
+[[workflows.ticket.phase]]
+id                = "impl_finalize"
+type              = "producer"
+label             = "finalize"
+persona           = "impl-finalize.md"
+model             = "Qwen3.6_35B_A3B_NVFP4"
+skills            = ["workbench"]
+artifact          = "impl.md"
+inputs            = ["plan", "impl_core", "impl_integration"]
+max_artifact_chars = 10000
+
+[[workflows.ticket.phase]]
+id      = "review_impl"
+type    = "reviewer"
+label   = "implementation audits"
+against = ["plan", "impl_core", "impl_integration", "impl_finalize"]
+structured_findings = true
+max_artifact_chars = 12000
+
+[[workflows.ticket.phase.audits]]
+id      = "architecture"
+label   = "requirements + architecture"
+persona = "review-impl-architecture.md"
+model   = "Qwen3.6_27B_NVFP4"
+skills  = ["workbench"]
+
+[[workflows.ticket.phase.audits]]
+id      = "correctness"
+label   = "correctness + lifecycle"
+persona = "review-impl-correctness.md"
+model   = "Qwen3.6_27B_NVFP4"
+skills  = ["workbench"]
+
+[[workflows.ticket.phase.audits]]
+id      = "tests"
+label   = "tests + regressions"
+persona = "review-impl-tests.md"
+model   = "Qwen3.6_27B_NVFP4"
+skills  = ["workbench"]
+
+[[workflows.ticket.phase]]
+id           = "review_impl_final"
+type         = "finalizer"
+label        = "implementation gate"
+persona      = "review-final.md"
+model        = "Qwen3.6_27B_NVFP4"
+skills		 = ["workbench"]
+reconciles   = ["review_impl"]
+gates        = true
+structured_findings = true
+retry_budget = 1
+on_block     = "impl_finalize"
+max_artifact_chars = 12000
+
+[[workflows.ticket.phase]]
+id           = "test"
+type         = "mechanical"
+label        = "run tests locally"
+step         = "test"
+gates        = true
+retry_budget = 4
+on_block     = "impl_finalize"
+
+[[workflows.ticket.phase]]
+id           = "build"
+type         = "mechanical"
+label        = "build Linux and Windows executables"
+step         = "build"
+gates        = true
+retry_budget = 4
+on_block     = "impl_finalize"
+
+[[workflows.ticket.phase]]
+id       = "commit"
+type     = "producer"
+label    = "commit + push + PR"
+persona  = "commit.md"
+model    = "Qwen3.6_35B_A3B_NVFP4"
+skills   = ["github-cli"]
+artifact = "commit.md"
+inputs   = ["plan", "impl_finalize"]
+max_artifact_chars = 8000
+
+[[workflows.ticket.phase]]
+id           = "ci"
+type         = "mechanical"
+label        = "wait for PR tests"
+step         = "ci_check"
+gates        = true
+retry_budget = 2
+on_block     = "impl_finalize"
+
+[workflows.pr_update]
+label = "Update existing PR"
+mode = "update"
+feedback_after_head = true
+resolve_review_threads = true
+
+[[workflows.pr_update.phase]]
+id = "update_scope"
+type = "producer"
+label = "scope update"
+persona = "update-scope.md"
+model = "Qwen3.6_35B_A3B_NVFP4"
+skills = ["workbench"]
+artifact = "update-scope.md"
+self_check = true
+max_artifact_chars = 8000
+
+[[workflows.pr_update.phase]]
+id = "update_impl"
+type = "producer"
+label = "implement update"
+persona = "update-impl.md"
+model = "Qwen3.6_35B_A3B_NVFP4"
+skills = ["workbench"]
+artifact = "update-impl.md"
+inputs = ["update_scope"]
+self_check = true
+max_artifact_chars = 8000
+
+[[workflows.pr_update.phase]]
+id = "test"
+type = "mechanical"
+label = "run tests locally"
+step = "test"
+gates = true
+retry_budget = 4
+on_block = "update_impl"
+
+[[workflows.pr_update.phase]]
+id = "build"
+type = "mechanical"
+label = "build Linux and Windows executables"
+step = "build"
+gates = true
+retry_budget = 4
+on_block = "update_impl"
+
+[[workflows.pr_update.phase]]
+id = "review_update"
+type = "reviewer"
+label = "review update"
+persona = "review-update.md"
+models = ["Qwen3.6_27B_NVFP4"]
+skills = ["workbench"]
+against = ["update_scope", "update_impl"]
+gates = true
+structured_findings = true
+retry_budget = 1
+on_block = "update_impl"
+max_artifact_chars = 8000
+
+[[workflows.pr_update.phase]]
+id = "head_guard"
+type = "mechanical"
+step = "pr_head_guard"
+
+[[workflows.pr_update.phase]]
+id = "commit_update"
+type = "producer"
+label = "push PR update"
+persona = "commit.md"
+model = "Qwen3.6_35B_A3B_NVFP4"
+skills = ["github-cli"]
+artifact = "commit-update.md"
+inputs = ["update_scope", "update_impl"]
+max_artifact_chars = 6000
+
+[[workflows.pr_update.phase]]
+id = "ci"
+type = "mechanical"
+label = "wait for PR tests"
+step = "ci_check"
+gates = true
+retry_budget = 2
+on_block = "update_impl"
+
+[[workflows.pr_update.phase]]
+id = "acknowledge_feedback"
+type = "mechanical"
+step = "acknowledge_pr_feedback"
+
+[workflows.pr_review]
+label = "Pull Request Review"
+mode = "review"
+
+[[workflows.pr_review.phase]]
+id = "collect_pr_evidence"
+type = "mechanical"
+label = "collect verification"
+step = "collect_pr_evidence"
+artifact = "pr-verification.md"
+
+[[workflows.pr_review.phase]]
+id = "review_pr"
+type = "reviewer"
+label = "review pull request"
+against = ["collect_pr_evidence"]
+structured_findings = true
+max_artifact_chars = 12000
+
+[[workflows.pr_review.phase.audits]]
+id = "requirements"
+label = "requirements"
+persona = "pr-review-requirements.md"
+model = "Qwen3.6_27B_NVFP4"
+skills = ["pull-request-review", "workbench", "technical-writing"]
+
+[[workflows.pr_review.phase.audits]]
+id = "correctness"
+label = "correctness"
+persona = "pr-review-correctness.md"
+model = "Qwen3.6_27B_NVFP4"
+skills = ["pull-request-review", "workbench", "technical-writing"]
+
+[[workflows.pr_review.phase.audits]]
+id = "architecture"
+label = "architecture"
+persona = "pr-review-architecture.md"
+model = "Qwen3.6_27B_NVFP4"
+skills = ["pull-request-review", "workbench", "technical-writing"]
+
+[[workflows.pr_review.phase]]
+id = "review_pr_final"
+type = "finalizer"
+label = "review gate"
+persona = "pr-review-final.md"
+model = "Qwen3.6_27B_NVFP4"
+skills = ["pull-request-review", "workbench", "technical-writing"]
+artifact = "pr-review.json"
+reconciles = ["review_pr"]
+max_artifact_chars = 16000
+
+[[workflows.pr_review.phase]]
+id = "publish_pr_review"
+type = "mechanical"
+label = "publish review"
+step = "publish_pr_review"
