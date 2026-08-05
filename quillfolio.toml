@@ -86,6 +86,9 @@ model    = "Qwen3.6_35B_A3B_NVFP4"
 skills   = ["workbench"]
 artifact = "plan.md"
 max_artifact_chars = 16000
+self_check = "self-check-plan.md"
+produces_contract = "quill.plan/v1"
+accepts_contracts = ["quill.review.findings/v1"]
 
 [[workflows.ticket.phase]]
 id           = "review_plan"
@@ -100,6 +103,9 @@ structured_findings = true
 retry_budget = 1
 on_block     = "plan"
 max_artifact_chars = 12000
+self_check = "self-check-findings.md"
+produces_contract = "quill.review.findings/v1"
+accepts_contracts = ["quill.plan/v1"]
 
 [[workflows.ticket.phase]]
 id                = "impl_core"
@@ -111,6 +117,9 @@ skills            = ["workbench"]
 artifact          = "impl-core.md"
 inputs            = ["plan"]
 max_artifact_chars = 8000
+self_check = true
+produces_contract = "quill.implementation/v1"
+accepts_contracts = ["quill.plan/v1"]
 
 [[workflows.ticket.phase]]
 id                = "impl_integration"
@@ -122,6 +131,9 @@ skills            = ["workbench"]
 artifact          = "impl-integration.md"
 inputs            = ["plan", "impl_core"]
 max_artifact_chars = 8000
+self_check = true
+produces_contract = "quill.implementation/v1"
+accepts_contracts = ["quill.plan/v1", "quill.implementation/v1"]
 
 [[workflows.ticket.phase]]
 id                = "impl_finalize"
@@ -133,6 +145,9 @@ skills            = ["workbench"]
 artifact          = "impl.md"
 inputs            = ["plan", "impl_core", "impl_integration"]
 max_artifact_chars = 10000
+self_check = true
+produces_contract = "quill.implementation/v1"
+accepts_contracts = ["quill.plan/v1", "quill.implementation/v1", "quill.review.findings/v1", "quill.verification/v1", "quill.ci/v1"]
 
 [[workflows.ticket.phase]]
 id      = "review_impl"
@@ -141,6 +156,9 @@ label   = "implementation audits"
 against = ["plan", "impl_core", "impl_integration", "impl_finalize"]
 structured_findings = true
 max_artifact_chars = 12000
+self_check = "self-check-findings.md"
+produces_contract = "quill.review.findings/v1"
+accepts_contracts = ["quill.plan/v1", "quill.implementation/v1"]
 
 [[workflows.ticket.phase.audits]]
 id      = "architecture"
@@ -176,6 +194,9 @@ structured_findings = true
 retry_budget = 1
 on_block     = "impl_finalize"
 max_artifact_chars = 12000
+self_check = "self-check-findings.md"
+produces_contract = "quill.review.findings/v1"
+accepts_contracts = ["quill.review.findings/v1"]
 
 [[workflows.ticket.phase]]
 id           = "test"
@@ -185,6 +206,9 @@ step         = "test"
 gates        = true
 retry_budget = 4
 on_block     = "impl_finalize"
+requires     = ["impl_finalize"]
+produces_contract = "quill.verification/v1"
+accepts_contracts = ["quill.implementation/v1"]
 
 [[workflows.ticket.phase]]
 id           = "build"
@@ -194,6 +218,9 @@ step         = "build"
 gates        = true
 retry_budget = 4
 on_block     = "impl_finalize"
+requires     = ["impl_finalize"]
+produces_contract = "quill.verification/v1"
+accepts_contracts = ["quill.implementation/v1"]
 
 [[workflows.ticket.phase]]
 id       = "commit"
@@ -205,6 +232,10 @@ skills   = ["github-cli"]
 artifact = "commit.md"
 inputs   = ["plan", "impl_finalize"]
 max_artifact_chars = 8000
+self_check = true
+requires = ["review_impl_final", "test", "build"]
+produces_contract = "quill.delivery/v1"
+accepts_contracts = ["quill.plan/v1", "quill.implementation/v1", "quill.review.findings/v1", "quill.verification/v1"]
 
 [[workflows.ticket.phase]]
 id           = "ci"
@@ -214,6 +245,9 @@ step         = "ci_check"
 gates        = true
 retry_budget = 2
 on_block     = "impl_finalize"
+requires     = ["commit"]
+produces_contract = "quill.ci/v1"
+accepts_contracts = ["quill.delivery/v1"]
 
 [workflows.pr_update]
 label = "Update existing PR"
@@ -231,6 +265,7 @@ skills = ["workbench"]
 artifact = "update-scope.md"
 self_check = true
 max_artifact_chars = 8000
+produces_contract = "quill.update.scope/v1"
 
 [[workflows.pr_update.phase]]
 id = "update_impl"
@@ -243,6 +278,8 @@ artifact = "update-impl.md"
 inputs = ["update_scope"]
 self_check = true
 max_artifact_chars = 8000
+produces_contract = "quill.update.implementation/v1"
+accepts_contracts = ["quill.update.scope/v1", "quill.verification/v1", "quill.review.findings/v1", "quill.ci/v1"]
 
 [[workflows.pr_update.phase]]
 id = "test"
@@ -252,6 +289,9 @@ step = "test"
 gates = true
 retry_budget = 4
 on_block = "update_impl"
+requires = ["update_impl"]
+produces_contract = "quill.verification/v1"
+accepts_contracts = ["quill.update.implementation/v1"]
 
 [[workflows.pr_update.phase]]
 id = "build"
@@ -261,6 +301,9 @@ step = "build"
 gates = true
 retry_budget = 4
 on_block = "update_impl"
+requires = ["update_impl"]
+produces_contract = "quill.verification/v1"
+accepts_contracts = ["quill.update.implementation/v1"]
 
 [[workflows.pr_update.phase]]
 id = "review_update"
@@ -275,11 +318,17 @@ structured_findings = true
 retry_budget = 1
 on_block = "update_impl"
 max_artifact_chars = 8000
+self_check = "self-check-findings.md"
+produces_contract = "quill.review.findings/v1"
+accepts_contracts = ["quill.update.scope/v1", "quill.update.implementation/v1"]
 
 [[workflows.pr_update.phase]]
 id = "head_guard"
 type = "mechanical"
 step = "pr_head_guard"
+requires = ["review_update"]
+produces_contract = "quill.pr-head/v1"
+accepts_contracts = ["quill.review.findings/v1"]
 
 [[workflows.pr_update.phase]]
 id = "commit_update"
@@ -291,6 +340,10 @@ skills = ["github-cli"]
 artifact = "commit-update.md"
 inputs = ["update_scope", "update_impl"]
 max_artifact_chars = 6000
+self_check = true
+requires = ["test", "build", "review_update", "head_guard"]
+produces_contract = "quill.delivery/v1"
+accepts_contracts = ["quill.update.scope/v1", "quill.update.implementation/v1", "quill.verification/v1", "quill.review.findings/v1", "quill.pr-head/v1"]
 
 [[workflows.pr_update.phase]]
 id = "ci"
@@ -300,11 +353,17 @@ step = "ci_check"
 gates = true
 retry_budget = 2
 on_block = "update_impl"
+requires = ["commit_update"]
+produces_contract = "quill.ci/v1"
+accepts_contracts = ["quill.delivery/v1"]
 
 [[workflows.pr_update.phase]]
 id = "acknowledge_feedback"
 type = "mechanical"
 step = "acknowledge_pr_feedback"
+requires = ["commit_update", "ci"]
+produces_contract = "quill.feedback-ack/v1"
+accepts_contracts = ["quill.delivery/v1", "quill.ci/v1"]
 
 [workflows.pr_review]
 label = "Pull Request Review"
@@ -316,6 +375,7 @@ type = "mechanical"
 label = "collect verification"
 step = "collect_pr_evidence"
 artifact = "pr-verification.md"
+produces_contract = "quill.pr-evidence/v1"
 
 [[workflows.pr_review.phase]]
 id = "review_pr"
@@ -324,6 +384,9 @@ label = "review pull request"
 against = ["collect_pr_evidence"]
 structured_findings = true
 max_artifact_chars = 12000
+self_check = "self-check-findings.md"
+produces_contract = "quill.review.findings/v1"
+accepts_contracts = ["quill.pr-evidence/v1"]
 
 [[workflows.pr_review.phase.audits]]
 id = "requirements"
@@ -356,9 +419,15 @@ skills = ["pull-request-review", "workbench", "technical-writing"]
 artifact = "pr-review.json"
 reconciles = ["review_pr"]
 max_artifact_chars = 16000
+self_check = "self-check-findings.md"
+produces_contract = "quill.pr.review/v1"
+accepts_contracts = ["quill.review.findings/v1"]
 
 [[workflows.pr_review.phase]]
 id = "publish_pr_review"
 type = "mechanical"
 label = "publish review"
 step = "publish_pr_review"
+requires = ["review_pr_final"]
+produces_contract = "quill.review-publication/v1"
+accepts_contracts = ["quill.pr.review/v1"]
