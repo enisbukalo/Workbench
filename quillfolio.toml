@@ -2,7 +2,7 @@
 #
 # This is the DEFAULT written by `quill --init`. It reproduces quill's classic
 # 0-6 workflow: branch -> plan -> review plan -> implement -> review impl
-# (2-model fan-out + finalizer) -> build/test -> commit/PR.
+# (2-model fan-out + finalizer) -> build/test -> delivery intent -> mechanical commit/PR.
 #
 # Everything here is data: edit it (or the server's shared persona library)
 # and the change is picked up on the next run. Adding, removing, reordering, or
@@ -15,29 +15,15 @@
 pr_base       = "main"
 
 [runner]
-# REQUIRED -- which coding-agent CLI quill drives each phase through.
-# Built-in: "opencode" or "pi". Configure that CLI's models to point at the server.
-kind = "pi"
-
 # Model-server backend behind the pre-spawn seam.
 #   "llamacpp" (default) -- swap presets per phase on the llama.cpp router.
-#   "vllm"               -- one always-on model; reset its prefix cache before each phase.
+#   "vllm"               -- use the service-owned vLLM model registry.
 # vllm requires machine-level QUILL_VLLM_URL. Launch vllm with VLLM_SERVER_DEV_MODE=1
 # so POST /reset_prefix_cache is mounted. Never commit machine addresses here.
 backend    = "vllm"
 
-# Before each LLM phase, Quill requires the configured model to exactly match GET /v1/models.
-# When another model is resident, append its service below to this command and wait for vLLM.
-[runner.vllm]
-command = ["sudo", "systemctl", "start"]
-
-[runner.vllm.models]
-Gemma4_31B_NVFP4       = "gemma31-nvfp4"
-Gemma4_31B_FP8         = "gemma31"
-"Qwen3.6_27B_NVFP4"     = "qwen27-nvfp4"
-"Qwen3.6_27B_FP8"       = "qwen27"
-"Qwen3.6_35B_A3B_NVFP4" = "qwen35-nvfp4"
-"Qwen3.6_35B_A3B_FP8"   = "qwen35"
+# The service-owned model registry controls launch commands and model-to-service mappings.
+# Repository config may only select an approved model ID on each phase.
 
 [build]
 # Local gates run tests first, then build the Linux and Windows release executables. Quill captures
@@ -50,11 +36,6 @@ log_dir = "logs"
 default = 3          # default revise rounds for gated phases without an explicit retry_budget
 spawn   = 1          # re-spawns on CRASH / GARBAGE -- any phase
 
-[timeouts]
-opencode_run_seconds = 5400   # per-spawn hang guard
-model_load_seconds   = 360    # vLLM service switch/load ceiling (6 minutes)
-ci_seconds           = 2400   # GitHub Actions queue + PR build/test ceiling
-
 # ---------------------------------------------------------------------------
 # Phases: an ordered array. The engine runs them top to bottom, dispatching on
 # `type`. Reorder/add/remove freely.
@@ -64,9 +45,10 @@ ci_seconds           = 2400   # GitHub Actions queue + PR build/test ceiling
 #                lanes concurrently on vLLM; `models=[...]` remains sequential model fan-out.
 #                `against=[producer ids]` names the artifacts it reviews against.
 #   finalizer  - LLM reconciles N reviewers' findings + gates.   reconciles=[...]
-#   mechanical - deterministic `test`, `build`, combined `build_test`, or `ci_check` step.
+#   mechanical - deterministic verification, delivery, CI, or publication step.
 #
-# Git is agent-driven: branch + commit are producers whose personas run git/gh themselves.
+# The server prepares the branch mechanically. Agents author typed delivery text only; mechanical
+# delivery validates and owns staging, the commit, the exact non-forced push, and PR creation.
 # Flow flags: gates, retry_budget, on_block (producer to re-run on BLOCK).
 # ---------------------------------------------------------------------------
 
@@ -223,19 +205,27 @@ produces_contract = "quill.verification/v1"
 accepts_contracts = ["quill.implementation/v1"]
 
 [[workflows.ticket.phase]]
-id       = "commit"
+id       = "delivery_intent"
 type     = "producer"
-label    = "commit + push + PR"
-persona  = "commit.md"
+label    = "prepare delivery text"
+persona  = "delivery-intent.md"
 model    = "Qwen3.6_35B_A3B_NVFP4"
-skills   = ["github-cli"]
-artifact = "commit.md"
+skills   = []
+artifact = "delivery-intent.md"
 inputs   = ["plan", "impl_finalize"]
 max_artifact_chars = 8000
-self_check = true
 requires = ["review_impl_final", "test", "build"]
-produces_contract = "quill.delivery/v1"
+produces_contract = "quill.delivery-intent/v1"
 accepts_contracts = ["quill.plan/v1", "quill.implementation/v1", "quill.review.findings/v1", "quill.verification/v1"]
+
+[[workflows.ticket.phase]]
+id = "delivery"
+type = "mechanical"
+label = "commit + push + PR"
+step = "deliver_create"
+requires = ["delivery_intent"]
+produces_contract = "quill.delivery/v2"
+accepts_contracts = ["quill.delivery-intent/v1"]
 
 [[workflows.ticket.phase]]
 id           = "ci"
@@ -245,9 +235,9 @@ step         = "ci_check"
 gates        = true
 retry_budget = 2
 on_block     = "impl_finalize"
-requires     = ["commit"]
+requires     = ["delivery"]
 produces_contract = "quill.ci/v1"
-accepts_contracts = ["quill.delivery/v1"]
+accepts_contracts = ["quill.delivery/v2"]
 
 [workflows.pr_update]
 label = "Update existing PR"
@@ -331,19 +321,27 @@ produces_contract = "quill.pr-head/v1"
 accepts_contracts = ["quill.review.findings/v1"]
 
 [[workflows.pr_update.phase]]
-id = "commit_update"
+id = "delivery_update_intent"
 type = "producer"
-label = "push PR update"
-persona = "commit.md"
+label = "prepare PR update text"
+persona = "delivery-intent.md"
 model = "Qwen3.6_35B_A3B_NVFP4"
-skills = ["github-cli"]
-artifact = "commit-update.md"
+skills = []
+artifact = "delivery-update-intent.md"
 inputs = ["update_scope", "update_impl"]
 max_artifact_chars = 6000
-self_check = true
 requires = ["test", "build", "review_update", "head_guard"]
-produces_contract = "quill.delivery/v1"
+produces_contract = "quill.delivery-intent/v1"
 accepts_contracts = ["quill.update.scope/v1", "quill.update.implementation/v1", "quill.verification/v1", "quill.review.findings/v1", "quill.pr-head/v1"]
+
+[[workflows.pr_update.phase]]
+id = "delivery_update"
+type = "mechanical"
+label = "commit + push PR update"
+step = "deliver_update"
+requires = ["delivery_update_intent"]
+produces_contract = "quill.delivery/v2"
+accepts_contracts = ["quill.delivery-intent/v1"]
 
 [[workflows.pr_update.phase]]
 id = "ci"
@@ -353,17 +351,17 @@ step = "ci_check"
 gates = true
 retry_budget = 2
 on_block = "update_impl"
-requires = ["commit_update"]
+requires = ["delivery_update"]
 produces_contract = "quill.ci/v1"
-accepts_contracts = ["quill.delivery/v1"]
+accepts_contracts = ["quill.delivery/v2"]
 
 [[workflows.pr_update.phase]]
 id = "acknowledge_feedback"
 type = "mechanical"
 step = "acknowledge_pr_feedback"
-requires = ["commit_update", "ci"]
+requires = ["delivery_update", "ci"]
 produces_contract = "quill.feedback-ack/v1"
-accepts_contracts = ["quill.delivery/v1", "quill.ci/v1"]
+accepts_contracts = ["quill.delivery/v2", "quill.ci/v1"]
 
 [workflows.pr_review]
 label = "Pull Request Review"
