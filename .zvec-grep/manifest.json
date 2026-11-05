@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 1,
+  "id": "83f8ee89-8af5-4156-8381-7d31b13af006",
+  "name": "Workbench",
+  "path": "/home/bukaloenis/Documents/GitHub/Workbench/.zvec-grep",
+  "rootPaths": [
+    {
+      "absolutePath": "/home/bukaloenis/Documents/GitHub/Workbench",
+      "recursive": true
+    }
+  ],
+  "indexPolicy": "enabled",
+  "embedding": {
+    "provider": "local",
+    "model": "potion-code-16m-v2",
+    "dimension": 256,
+    "metric": "cosine"
+  },
+  "indexVersion": 1,
+  "createdTime": 1793843229032,
+  "updatedTime": 1793843237027,
+  "embeddingRuntime": {
+    "device": "auto"
+  }
+}
